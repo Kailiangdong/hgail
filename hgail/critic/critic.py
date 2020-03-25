@@ -55,8 +55,8 @@ class Critic(object):
             acts = self.dataset.action_normalizer(acts)
 
         # compute rewards
-        rewards = self.network.forward(obs, acts, deterministic=True)
-
+        rewards_tmp = self.network.forward(obs, acts, deterministic=True)
+        rewards = -tf.log(1-tf.nn.sigmoid(rewards_tmp)+1e-8)
         if np.any(np.isnan(rewards)) and self.debug_nan:
             import ipdb
             ipdb.set_trace()
@@ -165,6 +165,10 @@ class WassersteinCritic(Critic):
 
     def _build_model(self):
         # unpack placeholders
+        # critic/real_obs
+        # critic/real_act
+        # critic/gen_obs
+        # critic/gen_act
         rx, ra, gx, ga, eps = self.rx, self.ra, self.gx, self.ga, self.eps
 
         # gradient penalty        
@@ -175,14 +179,24 @@ class WassersteinCritic(Critic):
         slopes = tf.sqrt(tf.reduce_sum(hat_gradients ** 2, reduction_indices=[1]) + 1e-8)
         self.gp_loss = gp_loss = self.gradient_penalty * tf.reduce_mean((slopes - 1) ** 2)
         
+        generator_logits = self.network(gx, ga)
+        expert_logits = self.network(rx, ra)
+        
         # loss and train op
-        self.real_loss = real_loss = -tf.reduce_mean(self.network(rx, ra))
-        self.gen_loss = gen_loss = tf.reduce_mean(self.network(gx, ga))
-        self.loss = loss = real_loss + gen_loss + gp_loss
+        self.real_loss = real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=expert_logits, labels=tf.ones_like(expert_logits)))
+        self.gen_loss = gen_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=generator_logits, labels=tf.zeros_like(generator_logits)))
+        
+        # Build entropy loss
+        logits = tf.concat([generator_logits, expert_logits], 0)
+        entropy = tf.reduce_mean(logit_bernoulli_entropy(logits))
+        entcoeff=0.001
+        entropy_loss = -entcoeff*entropy
+
+        self.loss = loss = real_loss + gen_loss + entropy_loss
 
         if self.verbose >= 2:
-            loss = tf.Print(loss, [real_loss, gen_loss, gp_loss, loss],
-                message='real, gen, gp, total loss: ')
+            loss = tf.Print(loss, [real_loss, gen_loss, entropy_loss, loss],
+                message='real, gen, entropy_loss, total loss: ')
         
         self.gradients = gradients = tf.gradients(loss, self.network.var_list)
         clipped_gradients = hgail.misc.tf_utils.clip_gradients(
@@ -190,11 +204,11 @@ class WassersteinCritic(Critic):
         
         self.global_step = tf.Variable(0, name='critic/global_step', trainable=False)
         self.train_op = self.optimizer.apply_gradients([(g,v) 
-                            for (g,v) in zip(clipped_gradients, self.network.var_list)],
+                            for (g,v) in zip(gradients, self.network.var_list)],
                             global_step=self.global_step)
         
         # summaries
-        summaries = self._build_summaries(loss, real_loss, gen_loss, gradients, clipped_gradients, gp_loss)
+        summaries = self._build_summaries(loss, real_loss, gen_loss, gradients, gradients, entropy_loss)
         summaries += self._build_input_summaries(rx, ra, gx, ga)
         self.summary_op = tf.summary.merge(summaries)
 
@@ -237,3 +251,12 @@ class WassersteinCritic(Critic):
         if self.summary_writer:
             self.summary_writer.add_summary(tf.Summary.FromString(summary), step)
             self.summary_writer.flush()
+
+    def logsigmoid(a):
+    '''Equivalent to tf.log(tf.sigmoid(a))'''
+    return -tf.nn.softplus(-a)
+
+    """ Reference: https://github.com/openai/imitation/blob/99fbccf3e060b6e6c739bdf209758620fcdefd3c/policyopt/thutil.py#L48-L51"""
+    def logit_bernoulli_entropy(logits):
+        ent = (1.-tf.nn.sigmoid(logits))*logits - logsigmoid(logits)
+        return ent
