@@ -13,7 +13,6 @@ from hgail.envs.vectorized_normalized_env import VectorizedNormalizedEnv
 '''
 Reward utils
 '''
-
 def batch_to_path_rewards(rewards, path_lengths):
     '''
     Args:

@@ -4,7 +4,7 @@ import tensorflow as tf
 
 import hgail.misc.utils
 import hgail.misc.tf_utils
-
+from hgail.critic.utils import logsigmoid, logit_bernoulli_entropy
 class Critic(object):
     """
     Critic base class
@@ -55,8 +55,8 @@ class Critic(object):
             acts = self.dataset.action_normalizer(acts)
 
         # compute rewards
-        rewards_tmp = self.network.forward(obs, acts, deterministic=True)
-        rewards = -tf.log(1-tf.nn.sigmoid(rewards_tmp)+1e-8)
+        rewards_tmp = - self.network.forward(obs, acts, deterministic=True)
+        rewards = -np.log(1 - 1/(1+np.exp(rewards_tmp) + 1e-8))
         if np.any(np.isnan(rewards)) and self.debug_nan:
             import ipdb
             ipdb.set_trace()
@@ -162,7 +162,6 @@ class WassersteinCritic(Critic):
         self.gx = tf.placeholder(tf.float32, shape=(None, self.obs_dim), name='gx')
         self.ga = tf.placeholder(tf.float32, shape=(None, self.act_dim), name='ga')
         self.eps  = tf.placeholder(tf.float32, shape=(None, 1), name='eps')
-
     def _build_model(self):
         # unpack placeholders
         # critic/real_obs
@@ -251,12 +250,3 @@ class WassersteinCritic(Critic):
         if self.summary_writer:
             self.summary_writer.add_summary(tf.Summary.FromString(summary), step)
             self.summary_writer.flush()
-
-    def logsigmoid(a):
-    '''Equivalent to tf.log(tf.sigmoid(a))'''
-    return -tf.nn.softplus(-a)
-
-    """ Reference: https://github.com/openai/imitation/blob/99fbccf3e060b6e6c739bdf209758620fcdefd3c/policyopt/thutil.py#L48-L51"""
-    def logit_bernoulli_entropy(logits):
-        ent = (1.-tf.nn.sigmoid(logits))*logits - logsigmoid(logits)
-        return ent
