@@ -53,7 +53,8 @@ class GAIL(TRPO):
     
                 and the returned value will be an array of shape (batch_size, prob_dim)
         """
-        super(GAIL, self).optimize_policy(itr, samples_data) 
+        for train_itr in range(3):
+            super(GAIL, self).optimize_policy(itr, samples_data) 
         if self.critic is not None:
             self.critic.train(itr, samples_data)
         if self.recognition is not None:

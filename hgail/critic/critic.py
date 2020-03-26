@@ -16,7 +16,7 @@ class Critic(object):
             obs_dim, 
             act_dim,
             optimizer=tf.train.RMSPropOptimizer(0.0001),
-            n_train_epochs=5,
+            n_train_epochs=1,
             grad_norm_rescale=10000.,
             grad_norm_clip=10000.,
             summary_writer=None,
