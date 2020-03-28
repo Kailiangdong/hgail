@@ -145,7 +145,12 @@ class Critic(object):
         return summaries
 
 class WassersteinCritic(Critic):
-    
+    # 改变reward done
+    # optimizer 用rmsprop done
+    # loss改变 done
+    # clip weight
+    # critic计算5次， generator 一次 done
+    # wgan里说的generator loss就是reward不要取log
     def __init__(
             self,
             gradient_penalty=10.,
@@ -176,12 +181,12 @@ class WassersteinCritic(Critic):
         self.gp_loss = gp_loss = self.gradient_penalty * tf.reduce_mean((slopes - 1) ** 2)
         
         # loss and train op
-        self.real_loss = real_loss = -tf.reduce_mean(self.network(rx, ra))
-        self.gen_loss = gen_loss = tf.reduce_mean(self.network(gx, ga))
-        self.loss = loss = real_loss + gen_loss + gp_loss
+        self.real_loss = real_loss = tf.reduce_mean(self.network(rx, ra))
+        self.gen_loss = gen_loss = -tf.reduce_mean(self.network(gx, ga))
+        self.loss = loss = real_loss + gen_loss
 
         if self.verbose >= 2:
-            loss = tf.Print(loss, [real_loss, gen_loss, gp_loss, loss],
+            loss = tf.Print(loss, [real_loss, gen_loss, loss, loss],
                 message='real, gen, gp, total loss: ')
         
         self.gradients = gradients = tf.gradients(loss, self.network.var_list)
@@ -190,16 +195,16 @@ class WassersteinCritic(Critic):
         
         self.global_step = tf.Variable(0, name='critic/global_step', trainable=False)
         self.train_op = self.optimizer.apply_gradients([(g,v) 
-                            for (g,v) in zip(clipped_gradients, self.network.var_list)],
+                            for (g,v) in zip(gradients, self.network.var_list)],
                             global_step=self.global_step)
-        
+        self.clip_D = [p.assign(tf.clip_by_value(p, -0.02, 0.02)) for p in self.network.var_list]
         # summaries
         summaries = self._build_summaries(loss, real_loss, gen_loss, gradients, clipped_gradients, gp_loss)
         summaries += self._build_input_summaries(rx, ra, gx, ga)
         self.summary_op = tf.summary.merge(summaries)
 
         # debug_nan
-        self.gp_gradients = tf.gradients(self.gp_loss, self.network.var_list)[:-1]
+        self.gp_gradients = tf.gradients(self.loss, self.network.var_list)[:-1]
         
     def _train_batch(self, batch):
 
@@ -210,7 +215,7 @@ class WassersteinCritic(Critic):
             self.ga: batch['ga'],
             self.eps: np.random.uniform(0, 1, len(batch['rx'])).reshape(-1, 1)
         }
-        outputs_list = [self.train_op, self.summary_op, self.global_step]
+        outputs_list = [self.train_op, self.clip_D, self.summary_op, self.global_step]
         if self.debug_nan:
             outputs_list += [
                 self.gradients, 
@@ -224,7 +229,7 @@ class WassersteinCritic(Critic):
             ] 
         session = tf.get_default_session()
         fetched = session.run(outputs_list, feed_dict=feed_dict)
-        summary, step = fetched[1], fetched[2]
+        summary, step = fetched[2], fetched[3]
 
         if self.debug_nan:
             grads, xhat, ahat, hat_grads, gp_grads, gp_loss, real_loss, gen_loss = fetched[3:]
