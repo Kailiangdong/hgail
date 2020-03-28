@@ -30,7 +30,7 @@ def _build_score_module(
         scores = tf.contrib.layers.fully_connected(
                     hidden, 
                     output_dim, 
-                    activation_fn=None, 
+                    activation_fn=tf.nn.sigmoid, 
                     biases_initializer=tf.constant_initializer(0.0),
                     weights_regularizer=weights_regularizer)
         return scores
